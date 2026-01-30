@@ -1,0 +1,9 @@
+{
+  "id": "nvidia-auth",
+  "providers": ["nvidia"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

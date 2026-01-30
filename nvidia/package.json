@@ -1,0 +1,11 @@
+{
+  "name": "@clawdbot/nvidia-auth",
+  "version": "1.0.0",
+  "description": "NVIDIA NIM provider plugin for Clawdbot",
+  "type": "module",
+  "clawdbot": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
