@@ -1,8 +1,8 @@
 # OpenClaw Provider Plugins
 
-本目录包含 OpenClaw 的第三方 AI 模型 Provider 插件。
+本目录包含 OpenClaw 的第三方 AI 模型 Provider 插件和 Skills。
 
-## 可用插件
+## 可用插件 (Plugins)
 
 | 插件 | Provider ID | 支持模型 |
 |------|-------------|----------|
@@ -10,11 +10,16 @@
 | GLM | `glm` | glm-4.7 |
 | Kimi | `kimi` | kimi-k2.5, kimi-k2-thinking, moonshot-v1 系列 |
 | Zenmux | `zenmux` | anthropic/claude-opus-4.5, openai/gpt-5.2-pro |
-| Zenmux Gen | `zenmux-gen` | google/gemini-3-pro-image-preview |
 
-## 安装
+## 可用技能 (Skills)
 
-1. 将插件目录复制到 OpenClaw 的 plugins 目录下：（可以根据需求选装或者都安装）
+| 技能 | 功能 | 依赖 |
+|------|------|------|
+| zenmux-image-gen-skill | 使用 Gemini 图像模型生成/编辑图片 | uv, ZENMUX_API_KEY |
+
+## 安装插件 (Plugins)
+
+将插件目录复制到 OpenClaw 的 plugins 目录下：（可以根据需求选装或者都安装）
 
 ```bash
 # 安装deepseek
@@ -33,15 +38,33 @@ openclaw plugins install ./
 cd zenmux
 openclaw plugins install ./
 
-# 安装zenmux-gen
-cd zenmux-gen
-openclaw plugins install ./
-
 # 安装完成重启一次
 
 # 重启当前运行的 gateway
 openclaw gateway restart
+```
 
+## 安装技能 (Skills)
+
+将技能目录复制到 OpenClaw 的 skills 目录下：
+
+```bash
+# 安装 zenmux-image-gen-skill
+cp -r zenmux-image-gen-skill ~/.openclaw/skills/
+
+# 安装 uv (如果未安装)
+# macOS
+brew install uv
+# 或者
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 配置 API Key
+export ZENMUX_API_KEY="your-api-key"
+# 或者
+openclaw config set skills.zenmux-image-gen-skill.apiKey "your-api-key"
+
+# 验证安装
+openclaw skills info zenmux-image-gen-skill
 ```
 
 
@@ -57,8 +80,6 @@ openclaw models auth login --provider glm
 openclaw models auth login --provider deepseek
 
 openclaw models auth login --provider zenmux
-
-openclaw models auth login --provider zenmux-gen
 ```
 
 
@@ -106,3 +127,45 @@ openclaw gateway restart
 
    anents ->  defaults -> model -> primary  修改这个值切换模型
 ```
+
+## 使用技能 (Skills)
+
+### zenmux-image-gen-skill
+
+生成图片：
+
+```bash
+# 在 OpenClaw 对话中，AI 会自动识别并调用此技能
+# 例如: "帮我生成一张夕阳下的山脉图片"
+
+# 或者直接运行脚本
+uv run ~/.openclaw/skills/zenmux-image-gen-skill/scripts/generate_image.py \
+  --prompt "a sunset over mountains" \
+  --filename "/tmp/sunset.png"
+```
+
+编辑图片：
+
+```bash
+uv run ~/.openclaw/skills/zenmux-image-gen-skill/scripts/generate_image.py \
+  --prompt "add more vibrant colors" \
+  --filename "/tmp/edited.png" \
+  -i "/tmp/original.png"
+```
+
+多图合成（最多 14 张）：
+
+```bash
+uv run ~/.openclaw/skills/zenmux-image-gen-skill/scripts/generate_image.py \
+  --prompt "combine these into a collage" \
+  --filename "/tmp/collage.png" \
+  -i img1.png -i img2.png -i img3.png
+```
+
+可用模型：
+- `google/gemini-3-pro-image-preview` (默认，最高质量)
+- `google/gemini-3-pro-image-preview-free` (免费版)
+- `google/gemini-2.5-flash-image` (更快)
+- `google/gemini-2.5-flash-image-free` (免费版，更快)
+
+**注意**: 在 Telegram/Discord 等聊天频道发送生成的图片时，需要使用 `message` 工具的 `filePath` 参数，而不是直接输出 `MEDIA:` 路径文本。
