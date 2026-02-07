@@ -2,7 +2,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 
 const PROVIDER_ID = "aliyun-bailian";
 const PROVIDER_LABEL = "Aliyun Bailian (阿里云百炼)";
-const DEFAULT_MODEL = "qwen3-max";
+const DEFAULT_MODEL = "aliyun-bailian/qwen3-max";
 const DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const DEFAULT_CONTEXT_WINDOW = 32768; // Conservative default, adjusting per model below
 const DEFAULT_MAX_TOKENS = 8192;
@@ -123,11 +123,11 @@ const bailianPlugin = {
                 agents: {
                   defaults: {
                     models: {
-                      "qwen3-max": { alias: "Qwen 3 Max" },
-                      "kimi-k2.5": { alias: "Kimi k2.5" },
-                      "glm-4.7": { alias: "GLM 4.7" },
-                      "MiniMax-M2.1": { alias: "MiniMax M2.1" },
-                      "deepseek-v3.2": { alias: "DeepSeek V3.2" },
+                      "aliyun-bailian/qwen3-max": { alias: "Qwen 3 Max" },
+                      "aliyun-bailian/kimi-k2.5": { alias: "Kimi k2.5" },
+                      "aliyun-bailian/glm-4.7": { alias: "GLM 4.7" },
+                      "aliyun-bailian/MiniMax-M2.1": { alias: "MiniMax M2.1" },
+                      "aliyun-bailian/deepseek-v3.2": { alias: "DeepSeek V3.2" },
                     },
                   },
                 },
