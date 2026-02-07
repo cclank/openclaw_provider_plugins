@@ -17,6 +17,12 @@ import base64
 import requests
 from pathlib import Path
 
+# Fix encoding issues
+import locale
+locale.setlocale(locale.LC_ALL, 'C.UTF-8')
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 # --- Constants ---
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DASHSCOPE_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
@@ -25,7 +31,13 @@ DASHSCOPE_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimo
 def get_api_key(provided_key: str | None) -> str:
     key = provided_key or os.environ.get("DASHSCOPE_API_KEY")
     if not key:
-        print("Error: DASHSCOPE_API_KEY not found. Set it in environment or pass --api-key.", file=sys.stderr)
+        # Try to read from config file
+        config_path = os.path.expanduser("~/.config/bailian-multimodal/api_key.txt")
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                key = f.read().strip()
+    if not key:
+        print("Error: DASHSCOPE_API_KEY not found. Set it in environment, pass --api-key, or create ~/.config/bailian-multimodal/api_key.txt.", file=sys.stderr)
         sys.exit(1)
     return key
 
@@ -35,7 +47,7 @@ def generate_image(api_key: str, model: str, prompt: str, output_path: str, size
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
-        "X-DashScope-Async": "enable",
+        # "X-DashScope-Async": "enable",  # Commented out because account doesn't support async
     }
     
     # Model-specific parameters
@@ -67,7 +79,11 @@ def generate_image(api_key: str, model: str, prompt: str, output_path: str, size
 
     print(f"Generating image with {model}...", file=sys.stderr)
     try:
-        response = requests.post(DASHSCOPE_API_URL, headers=headers, json=payload)
+        # Ensure payload uses UTF-8 encoding
+        import json as json_module
+        payload_bytes = json_module.dumps(payload, ensure_ascii=False).encode('utf-8')
+        headers['Content-Type'] = 'application/json; charset=utf-8'
+        response = requests.post(DASHSCOPE_API_URL, headers=headers, data=payload_bytes)
         response.raise_for_status()
         result = response.json()
         
@@ -106,6 +122,8 @@ def generate_image(api_key: str, model: str, prompt: str, output_path: str, size
 
     except Exception as e:
         print(f"Error generating image: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
 
