@@ -9,7 +9,7 @@
 | DeepSeek | `deepseek` | deepseek-chat (V3), deepseek-reasoner (R1) |
 | GLM | `glm` | glm-4.7 |
 | Kimi | `kimi` | kimi-k2.5, kimi-k2-thinking, moonshot-v1 系列 |
-| Aliyun Bailian | `aliyun-bailian` | qwen3-max, kimi-k2.5, glm-4.7, MiniMax-M2.1, deepseek-v3.2 |
+| Aliyun Bailian | `aliyun-bailian` | qwen3-max, kimi-k2.5, glm-4.7, MiniMax/MiniMax-M2.5, deepseek-v3.2 |
 | StreamLake (万擎) | `streamlake` | glm-5, minimax-m2.5 |
 | Zenmux | `zenmux` | anthropic/claude-opus-4.6, anthropic/claude-opus-4.5, openai/gpt-5.2-pro |
 
