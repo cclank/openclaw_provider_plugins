@@ -52,7 +52,7 @@ const aigocodeOpenaiPlugin = {
       envVars: ["AIGOCODE_OPENAI_API_KEY", "AIGOCODE_API_KEY"],
       models: {
         baseUrl: DEFAULT_BASE_URL,
-        api: "openai-response",
+        api: "openai-completions",
         models: MODELS,
       },
       auth: [
@@ -89,7 +89,7 @@ const aigocodeOpenaiPlugin = {
                   providers: {
                     [PROVIDER_ID]: {
                       baseUrl: DEFAULT_BASE_URL,
-                      api: "openai-response",
+                      api: "openai-completions",
                       models: MODELS,
                     },
                   },
