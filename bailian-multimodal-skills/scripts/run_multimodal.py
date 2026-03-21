@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #     "openai>=1.0.0",
-#     "dashscope>=1.14.0",
+#     "dashscope>=1.25.8",
 #     "requests>=2.31.0",
 #     "pillow>=10.0.0",
 # ]
@@ -40,6 +40,18 @@ def get_api_key(provided_key: str | None) -> str:
         print("Error: DASHSCOPE_API_KEY not found. Set it in environment, pass --api-key, or create ~/.config/bailian-multimodal/api_key.txt.", file=sys.stderr)
         sys.exit(1)
     return key
+
+
+# --- Local file helper ---
+def _to_file_url(path_or_url: str) -> str:
+    """Convert a local file path to file:// URL; leave URLs as-is."""
+    if path_or_url.startswith(("http://", "https://", "oss://", "data:", "file://")):
+        return path_or_url
+    abs_path = os.path.abspath(path_or_url)
+    if not os.path.exists(abs_path):
+        print(f"Error: File not found: {abs_path}", file=sys.stderr)
+        sys.exit(1)
+    return f"file://{abs_path}"
 
 
 # --- Image Generation ---
@@ -239,15 +251,153 @@ def run_tts(api_key: str, model: str, text: str, output_path: str, voice: str = 
         sys.exit(1)
 
 
+# --- Video: Shared helper ---
+def _download_video(video_url: str, output_path: str):
+    """Download video from URL and save to local file."""
+    print(f"Downloading video...", file=sys.stderr)
+    video_data = requests.get(video_url).content
+    with open(output_path, "wb") as f:
+        f.write(video_data)
+    print(f"Video saved to {output_path}")
+    print(f"MEDIA: {os.path.abspath(output_path)}")
+
+
+# --- Text-to-Video ---
+def generate_t2v(api_key: str, model: str, prompt: str, output_path: str,
+                 size: str | None = None, duration: int | None = None,
+                 prompt_extend: bool = True, shot_type: str = "single",
+                 negative_prompt: str | None = None, audio_url: str | None = None,
+                 watermark: bool = False, seed: int | None = None):
+    from http import HTTPStatus
+    from dashscope import VideoSynthesis
+    import dashscope
+    dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
+
+    print(f"Generating text-to-video with {model}...", file=sys.stderr)
+    try:
+        kwargs = dict(api_key=api_key, model=model, prompt=prompt,
+                      prompt_extend=prompt_extend, watermark=watermark)
+        if size:
+            kwargs["size"] = size
+        if duration is not None:
+            kwargs["duration"] = duration
+        if shot_type != "single":
+            kwargs["shot_type"] = shot_type
+        if negative_prompt:
+            kwargs["negative_prompt"] = negative_prompt
+        if audio_url:
+            kwargs["audio_url"] = audio_url
+        if seed is not None:
+            kwargs["seed"] = seed
+
+        rsp = VideoSynthesis.call(**kwargs)
+        if rsp.status_code == HTTPStatus.OK:
+            _download_video(rsp.output.video_url, output_path)
+        else:
+            print(f"Failed: {rsp.code}, {rsp.message}", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error generating t2v: {e}", file=sys.stderr)
+        import traceback; traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Image-to-Video ---
+def generate_i2v(api_key: str, model: str, img_url: str, output_path: str,
+                 prompt: str | None = None, resolution: str | None = None,
+                 duration: int | None = None, prompt_extend: bool = True,
+                 shot_type: str = "single", negative_prompt: str | None = None,
+                 audio_url: str | None = None, watermark: bool = False,
+                 seed: int | None = None):
+    from http import HTTPStatus
+    from dashscope import VideoSynthesis
+    import dashscope
+    dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
+
+    print(f"Generating image-to-video with {model}...", file=sys.stderr)
+    try:
+        resolved_img_url = _to_file_url(img_url)
+
+        kwargs = dict(api_key=api_key, model=model, img_url=resolved_img_url,
+                      prompt_extend=prompt_extend, watermark=watermark)
+        if prompt:
+            kwargs["prompt"] = prompt
+        if resolution:
+            kwargs["resolution"] = resolution
+        if duration is not None:
+            kwargs["duration"] = duration
+        if shot_type != "single":
+            kwargs["shot_type"] = shot_type
+        if negative_prompt:
+            kwargs["negative_prompt"] = negative_prompt
+        if audio_url:
+            kwargs["audio_url"] = audio_url
+        if seed is not None:
+            kwargs["seed"] = seed
+
+        rsp = VideoSynthesis.call(**kwargs)
+        if rsp.status_code == HTTPStatus.OK:
+            _download_video(rsp.output.video_url, output_path)
+        else:
+            print(f"Failed: {rsp.code}, {rsp.message}", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error generating i2v: {e}", file=sys.stderr)
+        import traceback; traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Reference-to-Video ---
+def generate_r2v(api_key: str, model: str, prompt: str, reference_urls: list[str],
+                 output_path: str, size: str | None = None,
+                 duration: int | None = None, shot_type: str = "single",
+                 negative_prompt: str | None = None, audio: bool = True,
+                 watermark: bool = False, seed: int | None = None):
+    from http import HTTPStatus
+    from dashscope import VideoSynthesis
+    import dashscope
+    dashscope.base_http_api_url = 'https://dashscope.aliyuncs.com/api/v1'
+
+    print(f"Generating reference-to-video with {model}...", file=sys.stderr)
+    try:
+        resolved_urls = [_to_file_url(u) for u in reference_urls]
+
+        kwargs = dict(api_key=api_key, model=model, prompt=prompt,
+                      reference_urls=resolved_urls, watermark=watermark)
+        if size:
+            kwargs["size"] = size
+        if duration is not None:
+            kwargs["duration"] = duration
+        if shot_type != "single":
+            kwargs["shot_type"] = shot_type
+        if negative_prompt:
+            kwargs["negative_prompt"] = negative_prompt
+        if not audio:
+            kwargs["audio"] = False
+        if seed is not None:
+            kwargs["seed"] = seed
+
+        rsp = VideoSynthesis.call(**kwargs)
+        if rsp.status_code == HTTPStatus.OK:
+            _download_video(rsp.output.video_url, output_path)
+        else:
+            print(f"Failed: {rsp.code}, {rsp.message}", file=sys.stderr)
+            sys.exit(1)
+    except Exception as e:
+        print(f"Error generating r2v: {e}", file=sys.stderr)
+        import traceback; traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run Bailian Multimodal Models")
-    parser.add_argument("--mode", required=True, choices=["image", "asr", "tts"], help="Task mode")
-    parser.add_argument("--model", required=True, help="Model name (e.g., z-image-turbo, qwen3-asr-flash)")
+    parser.add_argument("--mode", required=True, choices=["image", "asr", "tts", "t2v", "i2v", "r2v"], help="Task mode")
+    parser.add_argument("--model", required=True, help="Model name (e.g., z-image-turbo, wan2.6-t2v)")
     parser.add_argument("--api-key", help="DashScope API Key")
     
     # Image specific
-    parser.add_argument("--prompt", help="Text prompt for image generation")
-    parser.add_argument("--size", help="Image size (e.g., 1024*1024)")
+    parser.add_argument("--prompt", help="Text prompt for image/video generation")
+    parser.add_argument("--size", help="Image/video size (e.g., 1024*1024, 1280*720)")
     
     # ASR specific
     parser.add_argument("--input-audio", help="Input audio URL or file path")
@@ -255,6 +405,23 @@ def main():
     # TTS specific
     parser.add_argument("--text", help="Text to synthesize")
     parser.add_argument("--voice", default="Cherry", help="Voice for TTS")
+    
+    # Video shared
+    parser.add_argument("--duration", type=int, help="Video duration in seconds")
+    parser.add_argument("--prompt-extend", action=argparse.BooleanOptionalAction, default=True, help="Enable prompt smart rewrite (default: True)")
+    parser.add_argument("--shot-type", choices=["single", "multi"], default="single", help="Shot type: single or multi")
+    parser.add_argument("--negative-prompt", help="Negative prompt for video generation")
+    parser.add_argument("--audio-url", help="Audio URL for video with sound (t2v/i2v)")
+    parser.add_argument("--watermark", action="store_true", help="Add AI-generated watermark")
+    parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
+    
+    # I2V specific
+    parser.add_argument("--img-url", help="Image URL for i2v mode")
+    parser.add_argument("--resolution", help="Video resolution for i2v (480P/720P/1080P)")
+    
+    # R2V specific
+    parser.add_argument("--reference-urls", nargs="+", help="Reference URLs (images/videos) for r2v mode")
+    parser.add_argument("--no-audio", action="store_true", help="Generate silent video (r2v-flash only)")
     
     # Output
     parser.add_argument("--output", "-o", help="Output file path")
@@ -279,6 +446,35 @@ def main():
             print("Error: --text and --output are required for tts mode.", file=sys.stderr)
             sys.exit(1)
         run_tts(api_key, args.model, args.text, args.output, args.voice)
+
+    elif args.mode == "t2v":
+        if not args.prompt or not args.output:
+            print("Error: --prompt and --output are required for t2v mode.", file=sys.stderr)
+            sys.exit(1)
+        generate_t2v(api_key, args.model, args.prompt, args.output,
+                     size=args.size, duration=args.duration,
+                     prompt_extend=args.prompt_extend, shot_type=args.shot_type,
+                     negative_prompt=args.negative_prompt, audio_url=args.audio_url,
+                     watermark=args.watermark, seed=args.seed)
+
+    elif args.mode == "i2v":
+        if not args.img_url or not args.output:
+            print("Error: --img-url and --output are required for i2v mode.", file=sys.stderr)
+            sys.exit(1)
+        generate_i2v(api_key, args.model, args.img_url, args.output,
+                     prompt=args.prompt, resolution=args.resolution,
+                     duration=args.duration, prompt_extend=args.prompt_extend,
+                     shot_type=args.shot_type, negative_prompt=args.negative_prompt,
+                     audio_url=args.audio_url, watermark=args.watermark, seed=args.seed)
+
+    elif args.mode == "r2v":
+        if not args.prompt or not args.reference_urls or not args.output:
+            print("Error: --prompt, --reference-urls and --output are required for r2v mode.", file=sys.stderr)
+            sys.exit(1)
+        generate_r2v(api_key, args.model, args.prompt, args.reference_urls, args.output,
+                     size=args.size, duration=args.duration, shot_type=args.shot_type,
+                     negative_prompt=args.negative_prompt, audio=not args.no_audio,
+                     watermark=args.watermark, seed=args.seed)
 
 if __name__ == "__main__":
     main()
