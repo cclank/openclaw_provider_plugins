@@ -203,5 +203,8 @@ uv run ~/.openclaw/skills/bailian-multimodal-skills/scripts/run_multimodal.py \
 - **Image**: `z-image-turbo`, `wan2.6-t2i`
 - **ASR**: `qwen3-asr-flash`
 - **TTS**: `qwen3-tts-flash`
+- **T2V**: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
+- **I2V**: `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/kling-v3-video-generation`
+- **R2V**: `wan2.6-r2v-flash`, `wan2.6-r2v`, `pixverse/pixverse-v5.6-r2v`
 
 **注意**: 在 Telegram/Discord 等聊天频道发送生成的图片时，需要使用 `message` 工具的 `filePath` 参数，而不是直接输出 `MEDIA:` 路径文本。

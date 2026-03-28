@@ -14,8 +14,8 @@ import os
 import sys
 import json
 import base64
+import time
 import requests
-from pathlib import Path
 
 # Fix encoding issues
 import locale
@@ -26,6 +26,12 @@ sys.stderr.reconfigure(encoding='utf-8')
 # --- Constants ---
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 DASHSCOPE_API_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
+VIDEO_SYNTHESIS_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis"
+TASK_STATUS_URL = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
+PIXVERSE_T2V_MODELS = {"pixverse/pixverse-v5.6-t2v"}
+PIXVERSE_I2V_MODELS = {"pixverse/pixverse-v5.6-it2v"}
+PIXVERSE_R2V_MODELS = {"pixverse/pixverse-v5.6-r2v"}
+KLING_VIDEO_MODELS = {"kling/kling-v3-video-generation"}
 
 
 def get_api_key(provided_key: str | None) -> str:
@@ -52,6 +58,113 @@ def _to_file_url(path_or_url: str) -> str:
         print(f"Error: File not found: {abs_path}", file=sys.stderr)
         sys.exit(1)
     return f"file://{abs_path}"
+
+
+def _video_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Content-Type": "application/json; charset=utf-8",
+        "Authorization": f"Bearer {api_key}",
+        "X-DashScope-Async": "enable",
+    }
+
+
+def _post_json(url: str, headers: dict[str, str], payload: dict) -> dict:
+    payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    response = requests.post(url, headers=headers, data=payload_bytes)
+    response.raise_for_status()
+    result = response.json()
+    if result.get("code"):
+        raise RuntimeError(f"{result['code']}: {result.get('message', 'Unknown error')}")
+    return result
+
+
+def _poll_task(api_key: str, task_id: str, poll_interval: int = 15, timeout_seconds: int = 1800) -> dict:
+    headers = {"Authorization": f"Bearer {api_key}"}
+    started = time.time()
+    consecutive_errors = 0
+    while True:
+        try:
+            response = requests.get(TASK_STATUS_URL.format(task_id=task_id), headers=headers, timeout=60)
+            response.raise_for_status()
+            result = response.json()
+            consecutive_errors = 0
+        except requests.RequestException as exc:
+            consecutive_errors += 1
+            if consecutive_errors >= 3:
+                raise RuntimeError(f"Failed to poll task {task_id} after {consecutive_errors} consecutive network errors: {exc}") from exc
+            print(
+                f"Polling task {task_id} hit transient network error ({consecutive_errors}/3): {exc}. Retrying in 5s...",
+                file=sys.stderr,
+            )
+            time.sleep(5)
+            continue
+
+        if result.get("code"):
+            raise RuntimeError(f"{result['code']}: {result.get('message', 'Unknown error')}")
+
+        output = result.get("output", {})
+        task_status = output.get("task_status")
+        if task_status == "SUCCEEDED":
+            return result
+        if task_status in {"FAILED", "CANCELED", "UNKNOWN"}:
+            raise RuntimeError(f"Task {task_id} ended with status {task_status}: {result.get('message', output.get('message', ''))}")
+        if time.time() - started > timeout_seconds:
+            raise TimeoutError(f"Timed out waiting for task {task_id} after {timeout_seconds} seconds")
+
+        print(f"Task {task_id} status: {task_status or 'UNKNOWN'}, waiting {poll_interval}s...", file=sys.stderr)
+        time.sleep(poll_interval)
+
+
+def _submit_async_video_task(api_key: str, payload: dict) -> dict:
+    result = _post_json(VIDEO_SYNTHESIS_URL, _video_headers(api_key), payload)
+    output = result.get("output", {})
+    task_id = output.get("task_id")
+    if not task_id:
+        raise RuntimeError(f"Missing task_id in response: {json.dumps(result, ensure_ascii=False)}")
+    print(f"Created task {task_id}, polling for result...", file=sys.stderr)
+    return _poll_task(api_key, task_id)
+
+
+def _extract_video_url(task_result: dict) -> str:
+    output = task_result.get("output", {})
+    video_url = output.get("video_url") or output.get("results", [{}])[0].get("video_url")
+    if not video_url:
+        raise RuntimeError(f"No video_url found in task result: {json.dumps(task_result, ensure_ascii=False)}")
+    return video_url
+
+
+def _size_to_aspect_ratio(size: str | None) -> str | None:
+    if not size:
+        return None
+    mapping = {
+        "1280*720": "16:9",
+        "1920*1080": "16:9",
+        "1024*576": "16:9",
+        "640*360": "16:9",
+        "1280*960": "4:3",
+        "1920*1440": "4:3",
+        "1024*768": "4:3",
+        "640*480": "4:3",
+        "1280*1280": "1:1",
+        "1808*1808": "1:1",
+        "1024*1024": "1:1",
+        "640*640": "1:1",
+        "960*1280": "3:4",
+        "1440*1920": "3:4",
+        "768*1024": "3:4",
+        "480*640": "3:4",
+        "720*1280": "9:16",
+        "1080*1920": "9:16",
+        "576*1024": "9:16",
+        "360*640": "9:16",
+    }
+    if size in mapping:
+        return mapping[size]
+    try:
+        width, height = size.split("*", 1)
+        return f"{int(width)}:{int(height)}"
+    except (ValueError, TypeError):
+        return None
 
 
 # --- Image Generation ---
@@ -262,12 +375,171 @@ def _download_video(video_url: str, output_path: str):
     print(f"MEDIA: {os.path.abspath(output_path)}")
 
 
+def _generate_pixverse_t2v(api_key: str, model: str, prompt: str, output_path: str,
+                           size: str | None = None, duration: int | None = None,
+                           audio: bool = False, watermark: bool = False,
+                           seed: int | None = None):
+    payload = {
+        "model": model,
+        "input": {"prompt": prompt},
+        "parameters": {
+            "size": size or "1280*720",
+            "duration": duration or 5,
+            "audio": audio,
+            "watermark": watermark,
+        },
+    }
+    if seed is not None:
+        payload["parameters"]["seed"] = seed
+
+    result = _submit_async_video_task(api_key, payload)
+    _download_video(_extract_video_url(result), output_path)
+
+
+def _generate_pixverse_i2v(api_key: str, model: str, img_url: str, output_path: str,
+                           prompt: str | None = None, resolution: str | None = None,
+                           duration: int | None = None, audio: bool = False,
+                           watermark: bool = False, seed: int | None = None):
+    resolution_map = {
+        "360P": "640*360",
+        "540P": "1024*576",
+        "720P": "1280*720",
+        "1080P": "1920*1080",
+    }
+    payload = {
+        "model": model,
+        "input": {
+            "prompt": prompt or "",
+            "media": [{"type": "first_frame", "url": _to_file_url(img_url)}],
+        },
+        "parameters": {
+            "resolution": resolution or "720P",
+            "size": resolution_map.get((resolution or "720P").upper(), "1280*720"),
+            "duration": duration or 5,
+            "audio": audio,
+            "watermark": watermark,
+        },
+    }
+    if seed is not None:
+        payload["parameters"]["seed"] = seed
+
+    result = _submit_async_video_task(api_key, payload)
+    _download_video(_extract_video_url(result), output_path)
+
+
+def _generate_pixverse_r2v(api_key: str, model: str, prompt: str, reference_urls: list[str],
+                           output_path: str, size: str | None = None,
+                           duration: int | None = None, audio: bool = False,
+                           watermark: bool = False, seed: int | None = None):
+    payload = {
+        "model": model,
+        "input": {
+            "prompt": prompt,
+            "media": [{"type": "refer", "url": _to_file_url(url)} for url in reference_urls],
+        },
+        "parameters": {
+            "size": size or "1280*720",
+            "duration": duration or 5,
+            "audio": audio,
+            "watermark": watermark,
+        },
+    }
+    if seed is not None:
+        payload["parameters"]["seed"] = seed
+
+    result = _submit_async_video_task(api_key, payload)
+    _download_video(_extract_video_url(result), output_path)
+
+
+def _generate_kling_t2v(api_key: str, model: str, prompt: str, output_path: str,
+                        size: str | None = None, duration: int | None = None,
+                        audio: bool = False, watermark: bool = False,
+                        quality_mode: str = "std"):
+    payload = {
+        "model": model,
+        "input": {"prompt": prompt},
+        "parameters": {
+            "mode": quality_mode,
+            "aspect_ratio": _size_to_aspect_ratio(size) or "16:9",
+            "duration": duration or 5,
+            "audio": audio,
+            "watermark": watermark,
+        },
+    }
+
+    result = _submit_async_video_task(api_key, payload)
+    _download_video(_extract_video_url(result), output_path)
+
+
+def _generate_kling_i2v(api_key: str, model: str, img_url: str, output_path: str,
+                        prompt: str | None = None, duration: int | None = None,
+                        audio: bool = False, watermark: bool = False,
+                        quality_mode: str = "std"):
+    payload = {
+        "model": model,
+        "input": {
+            "prompt": prompt or "",
+            "media": [{"type": "first_frame", "url": _to_file_url(img_url)}],
+        },
+        "parameters": {
+            "mode": quality_mode,
+            "duration": duration or 5,
+            "audio": audio,
+            "watermark": watermark,
+        },
+    }
+
+    result = _submit_async_video_task(api_key, payload)
+    _download_video(_extract_video_url(result), output_path)
+
+
 # --- Text-to-Video ---
 def generate_t2v(api_key: str, model: str, prompt: str, output_path: str,
                  size: str | None = None, duration: int | None = None,
                  prompt_extend: bool = True, shot_type: str = "single",
                  negative_prompt: str | None = None, audio_url: str | None = None,
-                 watermark: bool = False, seed: int | None = None):
+                 watermark: bool = False, seed: int | None = None,
+                 audio: bool = False, quality_mode: str = "std"):
+    if model in PIXVERSE_T2V_MODELS:
+        print(f"Generating text-to-video with {model} (PixVerse API)...", file=sys.stderr)
+        try:
+            _generate_pixverse_t2v(
+                api_key,
+                model,
+                prompt,
+                output_path,
+                size=size,
+                duration=duration,
+                audio=audio,
+                watermark=watermark,
+                seed=seed,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating pixverse t2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
+    if model in KLING_VIDEO_MODELS:
+        print(f"Generating text-to-video with {model} (Kling API)...", file=sys.stderr)
+        try:
+            _generate_kling_t2v(
+                api_key,
+                model,
+                prompt,
+                output_path,
+                size=size,
+                duration=duration,
+                audio=audio,
+                watermark=watermark,
+                quality_mode=quality_mode,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating kling t2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
     from http import HTTPStatus
     from dashscope import VideoSynthesis
     import dashscope
@@ -308,7 +580,49 @@ def generate_i2v(api_key: str, model: str, img_url: str, output_path: str,
                  duration: int | None = None, prompt_extend: bool = True,
                  shot_type: str = "single", negative_prompt: str | None = None,
                  audio_url: str | None = None, watermark: bool = False,
-                 seed: int | None = None):
+                 seed: int | None = None, audio: bool = False,
+                 quality_mode: str = "std"):
+    if model in PIXVERSE_I2V_MODELS:
+        print(f"Generating image-to-video with {model} (PixVerse API)...", file=sys.stderr)
+        try:
+            _generate_pixverse_i2v(
+                api_key,
+                model,
+                img_url,
+                output_path,
+                prompt=prompt,
+                resolution=resolution,
+                duration=duration,
+                audio=audio,
+                watermark=watermark,
+                seed=seed,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating pixverse i2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
+    if model in KLING_VIDEO_MODELS:
+        print(f"Generating image-to-video with {model} (Kling API)...", file=sys.stderr)
+        try:
+            _generate_kling_i2v(
+                api_key,
+                model,
+                img_url,
+                output_path,
+                prompt=prompt,
+                duration=duration,
+                audio=audio,
+                watermark=watermark,
+                quality_mode=quality_mode,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating kling i2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
     from http import HTTPStatus
     from dashscope import VideoSynthesis
     import dashscope
@@ -353,6 +667,27 @@ def generate_r2v(api_key: str, model: str, prompt: str, reference_urls: list[str
                  duration: int | None = None, shot_type: str = "single",
                  negative_prompt: str | None = None, audio: bool = True,
                  watermark: bool = False, seed: int | None = None):
+    if model in PIXVERSE_R2V_MODELS:
+        print(f"Generating reference-to-video with {model} (PixVerse API)...", file=sys.stderr)
+        try:
+            _generate_pixverse_r2v(
+                api_key,
+                model,
+                prompt,
+                reference_urls,
+                output_path,
+                size=size,
+                duration=duration,
+                audio=audio,
+                watermark=watermark,
+                seed=seed,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating pixverse r2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
     from http import HTTPStatus
     from dashscope import VideoSynthesis
     import dashscope
@@ -412,8 +747,12 @@ def main():
     parser.add_argument("--shot-type", choices=["single", "multi"], default="single", help="Shot type: single or multi")
     parser.add_argument("--negative-prompt", help="Negative prompt for video generation")
     parser.add_argument("--audio-url", help="Audio URL for video with sound (t2v/i2v)")
+    parser.add_argument("--audio", dest="audio", action="store_true", help="Enable generated audio when the selected video model supports it")
+    parser.add_argument("--no-audio", dest="audio", action="store_false", help="Disable audio when the selected video model supports it")
     parser.add_argument("--watermark", action="store_true", help="Add AI-generated watermark")
     parser.add_argument("--seed", type=int, help="Random seed for reproducibility")
+    parser.add_argument("--quality-mode", choices=["std", "pro"], default="std", help="Video quality mode for models that support it (for example Kling)")
+    parser.set_defaults(audio=None)
     
     # I2V specific
     parser.add_argument("--img-url", help="Image URL for i2v mode")
@@ -421,13 +760,14 @@ def main():
     
     # R2V specific
     parser.add_argument("--reference-urls", nargs="+", help="Reference URLs (images/videos) for r2v mode")
-    parser.add_argument("--no-audio", action="store_true", help="Generate silent video (r2v-flash only)")
     
     # Output
     parser.add_argument("--output", "-o", help="Output file path")
 
     args = parser.parse_args()
     api_key = get_api_key(args.api_key)
+    video_audio = False if args.audio is None else args.audio
+    r2v_audio = True if args.audio is None else args.audio
     
     if args.mode == "image":
         if not args.prompt or not args.output:
@@ -455,7 +795,8 @@ def main():
                      size=args.size, duration=args.duration,
                      prompt_extend=args.prompt_extend, shot_type=args.shot_type,
                      negative_prompt=args.negative_prompt, audio_url=args.audio_url,
-                     watermark=args.watermark, seed=args.seed)
+                     watermark=args.watermark, seed=args.seed,
+                     audio=video_audio, quality_mode=args.quality_mode)
 
     elif args.mode == "i2v":
         if not args.img_url or not args.output:
@@ -465,7 +806,8 @@ def main():
                      prompt=args.prompt, resolution=args.resolution,
                      duration=args.duration, prompt_extend=args.prompt_extend,
                      shot_type=args.shot_type, negative_prompt=args.negative_prompt,
-                     audio_url=args.audio_url, watermark=args.watermark, seed=args.seed)
+                     audio_url=args.audio_url, watermark=args.watermark, seed=args.seed,
+                     audio=video_audio, quality_mode=args.quality_mode)
 
     elif args.mode == "r2v":
         if not args.prompt or not args.reference_urls or not args.output:
@@ -473,7 +815,7 @@ def main():
             sys.exit(1)
         generate_r2v(api_key, args.model, args.prompt, args.reference_urls, args.output,
                      size=args.size, duration=args.duration, shot_type=args.shot_type,
-                     negative_prompt=args.negative_prompt, audio=not args.no_audio,
+                     negative_prompt=args.negative_prompt, audio=r2v_audio,
                      watermark=args.watermark, seed=args.seed)
 
 if __name__ == "__main__":

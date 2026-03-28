@@ -32,16 +32,16 @@ metadata:
 
 # Bailian Multimodal Skills
 
-Generate images, audio, video, and transcribe speech using Aliyun Bailian (Qwen/Wan/CosyVoice) models.
+Generate images, audio, video, and transcribe speech using Aliyun Bailian (Qwen/Wan/PixVerse/Kling/CosyVoice) models.
 
 ## Features
 
 - **Image Generation**: `z-image-turbo`, `wan2.6-t2i`
 - **ASR (Speech-to-Text)**: `qwen3-asr-flash`
 - **TTS (Text-to-Speech)**: `qwen3-tts-flash`
-- **Text-to-Video**: `wan2.6-t2v`
-- **Image-to-Video**: `wan2.6-i2v-flash`, `wan2.6-i2v`
-- **Reference-to-Video**: `wan2.6-r2v-flash`, `wan2.6-r2v`
+- **Text-to-Video**: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
+- **Image-to-Video**: `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/kling-v3-video-generation`
+- **Reference-to-Video**: `wan2.6-r2v-flash`, `wan2.6-r2v`, `pixverse/pixverse-v5.6-r2v`
 
 ## Usage
 
@@ -79,9 +79,9 @@ Generate video from text prompt. Async task with auto-polling.
 uv run {baseDir}/scripts/run_multimodal.py --mode t2v --model wan2.6-t2v --prompt "一只小猫在月光下奔跑" --duration 10 --size "1280*720" --output "cat.mp4"
 ```
 
-Models: `wan2.6-t2v`
+Models: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
 
-Options: `--size` (e.g., 1280*720, 1920*1080), `--duration` (2-15s), `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--watermark`, `--seed`
+Options: `--size` (e.g., 1280*720, 1920*1080), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`, `--quality-mode std|pro`
 
 ### 5. Image-to-Video (I2V)
 
@@ -91,9 +91,9 @@ Generate video from a reference image (first frame).
 uv run {baseDir}/scripts/run_multimodal.py --mode i2v --model wan2.6-i2v-flash --img-url "https://example.com/cat.png" --prompt "A cat running" --resolution 720P --duration 5 --output "cat_run.mp4"
 ```
 
-Models: `wan2.6-i2v-flash`, `wan2.6-i2v`
+Models: `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/kling-v3-video-generation`
 
-Options: `--img-url` (required, image URL or base64), `--prompt`, `--resolution` (480P/720P/1080P), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--watermark`, `--seed`
+Options: `--img-url` (required, image URL, base64, or local file path), `--prompt`, `--resolution` (480P/720P/1080P), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`, `--quality-mode std|pro`
 
 ### 6. Reference-to-Video (R2V)
 
@@ -108,9 +108,14 @@ Multi-character example:
 uv run {baseDir}/scripts/run_multimodal.py --mode r2v --model wan2.6-r2v-flash --prompt "character1 对 character2 说你好" --reference-urls "https://example.com/role1.mp4" "https://example.com/role2.png" --shot-type multi --output "dialog.mp4"
 ```
 
-Models: `wan2.6-r2v-flash`, `wan2.6-r2v`
+Models: `wan2.6-r2v-flash`, `wan2.6-r2v`, `pixverse/pixverse-v5.6-r2v`
 
-Options: `--reference-urls` (required, space-separated, up to 5), `--prompt` (required, use character1/character2 to map references), `--size`, `--duration` (2-10s), `--shot-type single|multi`, `--negative-prompt`, `--no-audio` (silent, r2v-flash only), `--watermark`, `--seed`
+Options: `--reference-urls` (required, space-separated, up to 5, supports local file paths), `--prompt` (required, use character1/character2 to map references), `--size`, `--duration`, `--shot-type single|multi`, `--negative-prompt`, `--no-audio`, `--watermark`, `--seed`
+
+## Notes
+
+- 本地图片或视频路径会和 Wan 模型一样自动转换为 `file://` URL 后传入。
+- PixVerse 与 Kling 的官方文档描述以 URL 方式提交媒体；脚本已经兼容本地路径输入，但若百炼后端对某些模型拒绝 `file://`，请改用可公网访问的 HTTP/HTTPS URL。
 
 ## Configuration
 
