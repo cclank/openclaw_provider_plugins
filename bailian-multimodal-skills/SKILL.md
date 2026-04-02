@@ -36,7 +36,8 @@ Generate images, audio, video, and transcribe speech using Aliyun Bailian (Qwen/
 
 ## Features
 
-- **Image Generation**: `z-image-turbo`, `wan2.6-t2i`
+- **Image Generation**: `z-image-turbo`, `wan2.6-t2i`, `wan2.7-image-pro`
+- **Image Editing**: `wan2.7-image-pro`
 - **ASR (Speech-to-Text)**: `qwen3-asr-flash`
 - **TTS (Text-to-Speech)**: `qwen3-tts-flash`
 - **Text-to-Video**: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
@@ -53,9 +54,27 @@ Generate images from text.
 uv run {baseDir}/scripts/run_multimodal.py --mode image --model z-image-turbo --prompt "A futuristic city" --output "city.png"
 ```
 
-Models: `z-image-turbo`, `wan2.6-t2i`
+Models: `z-image-turbo`, `wan2.6-t2i`, `wan2.7-image-pro`
 
-### 2. ASR (Speech Recognition)
+`wan2.7-image-pro` supports multi-image sequential generation and `2K` size:
+
+```bash
+uv run {baseDir}/scripts/run_multimodal.py --mode image --model wan2.7-image-pro --prompt "电影感组图，记录同一只流浪橘猫的四季" --n 4 --enable-sequential --size 2K --output "cat_seasons.png"
+```
+
+Options (wan2.7-image-pro): `--n` (number of images), `--enable-sequential` (keep character consistency across images), `--size` (e.g., 2K, 1024*1024), `--watermark`
+
+### 2. Image Editing
+
+Edit images with text instructions. Supports multiple input images.
+
+```bash
+uv run {baseDir}/scripts/run_multimodal.py --mode image-edit --model wan2.7-image-pro --input-images "car.png" "graffiti.png" --prompt "把图2的涂鸦喷绘在图1的汽车上" --output "edited.png"
+```
+
+Options: `--input-images` (required, one or more image URLs/local paths), `--prompt` (required, editing instruction), `--size` (default: 2K), `--n`, `--watermark`, `--thinking-mode` (enable deeper reasoning for complex edits)
+
+### 3. ASR (Speech Recognition)
 
 Transcribe audio files or URLs to text.
 
@@ -63,7 +82,7 @@ Transcribe audio files or URLs to text.
 uv run {baseDir}/scripts/run_multimodal.py --mode asr --model qwen3-asr-flash --input-audio "https://example.com/audio.mp3"
 ```
 
-### 3. TTS (Speech Synthesis)
+### 4. TTS (Speech Synthesis)
 
 Convert text to speech.
 
@@ -71,7 +90,7 @@ Convert text to speech.
 uv run {baseDir}/scripts/run_multimodal.py --mode tts --model qwen3-tts-flash --text "Hello world" --output "hello.wav"
 ```
 
-### 4. Text-to-Video (T2V)
+### 5. Text-to-Video (T2V)
 
 Generate video from text prompt. Async task with auto-polling.
 
@@ -83,7 +102,7 @@ Models: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-genera
 
 Options: `--size` (e.g., 1280*720, 1920*1080), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`, `--quality-mode std|pro`
 
-### 5. Image-to-Video (I2V)
+### 6. Image-to-Video (I2V)
 
 Generate video from a reference image (first frame).
 
@@ -95,7 +114,7 @@ Models: `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/
 
 Options: `--img-url` (required, image URL, base64, or local file path), `--prompt`, `--resolution` (480P/720P/1080P), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`, `--quality-mode std|pro`
 
-### 6. Reference-to-Video (R2V)
+### 7. Reference-to-Video (R2V)
 
 Generate video with character/object references (images or videos as actors).
 

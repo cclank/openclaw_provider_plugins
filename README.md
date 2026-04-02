@@ -21,7 +21,7 @@
 | 技能 | 功能 | 依赖 |
 |------|------|------|
 | zenmux-image-gen-skill | 使用 Gemini 图像模型生成/编辑图片 | uv, ZENMUX_API_KEY |
-| bailian-multimodal-skills | 使用阿里云百炼多模态模型 (生图, ASR, TTS) | uv, DASHSCOPE_API_KEY |
+| bailian-multimodal-skills | 使用阿里云百炼多模态模型 (生图/编辑, ASR, TTS, 视频) | uv, DASHSCOPE_API_KEY |
 
 ## 安装插件 (Plugins)
 

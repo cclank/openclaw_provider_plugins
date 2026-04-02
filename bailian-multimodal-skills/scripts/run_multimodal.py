@@ -168,11 +168,48 @@ def _size_to_aspect_ratio(size: str | None) -> str | None:
 
 
 # --- Image Generation ---
-def generate_image(api_key: str, model: str, prompt: str, output_path: str, size: str = "1024*1024"):
+def _save_images_from_choices(result: dict, output_path: str):
+    """Extract and save image(s) from API response choices."""
+    if "output" not in result or "choices" not in result["output"]:
+        print(f"Unexpected response format: {json.dumps(result, indent=2)}", file=sys.stderr)
+        sys.exit(1)
+
+    choices = result["output"]["choices"]
+    if not choices:
+        print(f"No choices in response: {json.dumps(result, indent=2)}", file=sys.stderr)
+        sys.exit(1)
+
+    content = choices[0]["message"]["content"]
+    image_urls = [item["image"] for item in content if "image" in item]
+
+    if not image_urls:
+        print(f"No images found in response: {json.dumps(result, indent=2)}", file=sys.stderr)
+        sys.exit(1)
+
+    if len(image_urls) == 1:
+        print(f"Downloading image...", file=sys.stderr)
+        img_data = requests.get(image_urls[0]).content
+        with open(output_path, "wb") as f:
+            f.write(img_data)
+        print(f"Image saved to {output_path}")
+        print(f"MEDIA: {os.path.abspath(output_path)}")
+    else:
+        base, ext = os.path.splitext(output_path)
+        for i, url in enumerate(image_urls, 1):
+            path = f"{base}_{i}{ext}"
+            print(f"Downloading image {i}/{len(image_urls)}...", file=sys.stderr)
+            img_data = requests.get(url).content
+            with open(path, "wb") as f:
+                f.write(img_data)
+            print(f"Image {i} saved to {path}")
+            print(f"MEDIA: {os.path.abspath(path)}")
+
+
+def generate_image(api_key: str, model: str, prompt: str, output_path: str, size: str = "1024*1024",
+                   n: int = 1, enable_sequential: bool = False, watermark: bool = False):
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
-        # "X-DashScope-Async": "enable",  # Commented out because account doesn't support async
     }
     
     # Model-specific parameters
@@ -192,61 +229,88 @@ def generate_image(api_key: str, model: str, prompt: str, output_path: str, size
     if model == "z-image-turbo":
          payload["parameters"] = {
              "prompt_extend": False,
-             "size": size if size else "1024*1024" # Default for z-image-turbo
+             "size": size if size else "1024*1024"
          }
     elif model == "wan2.6-t2i":
         payload["parameters"] = {
             "prompt_extend": True,
             "watermark": False,
             "n": 1,
-            "size": size if size else "1280*1280" # Default for wan2.6
+            "size": size if size else "1280*1280"
         }
+    elif model == "wan2.7-image-pro":
+        payload["parameters"] = {
+            "n": n,
+            "size": size if size else "2K",
+            "watermark": watermark,
+        }
+        if enable_sequential:
+            payload["parameters"]["enable_sequential"] = True
 
     print(f"Generating image with {model}...", file=sys.stderr)
     try:
-        # Ensure payload uses UTF-8 encoding
-        import json as json_module
-        payload_bytes = json_module.dumps(payload, ensure_ascii=False).encode('utf-8')
+        payload_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         headers['Content-Type'] = 'application/json; charset=utf-8'
         response = requests.post(DASHSCOPE_API_URL, headers=headers, data=payload_bytes)
         response.raise_for_status()
         result = response.json()
         
-        # Check for immediate failure
         if "code" in result and result["code"]:
              print(f"API Error: {result['message']}", file=sys.stderr)
              sys.exit(1)
 
-        # Retrieve image URL
-        # Note: wan2.6 might be async? User example shows url in response directly for wan2.6 but z-image-turbo example also looks synchronous-ish or task based.
-        # Actually user example for z-image-turbo returns output.choices[0].message.content[0].image
-        # User example for wan2.6 returns output.choices[0].message.content[0].image
-        
-        # Let's handle the response structure as per user example
-        if "output" in result and "choices" in result["output"]:
-            choices = result["output"]["choices"]
-            if choices:
-                content = choices[0]["message"]["content"]
-                image_url = None
-                for item in content:
-                    if "image" in item:
-                        image_url = item["image"]
-                        break
-                
-                if image_url:
-                    print(f"Downloading image from {image_url}...", file=sys.stderr)
-                    img_data = requests.get(image_url).content
-                    with open(output_path, "wb") as f:
-                        f.write(img_data)
-                    print(f"Image saved to {output_path}")
-                    print(f"MEDIA: {os.path.abspath(output_path)}")
-                    return
-        
-        print(f"Unexpected response format or no image found: {json.dumps(result, indent=2)}", file=sys.stderr)
-        sys.exit(1)
+        _save_images_from_choices(result, output_path)
 
     except Exception as e:
         print(f"Error generating image: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        sys.exit(1)
+
+
+# --- Image Editing ---
+def generate_image_edit(api_key: str, model: str, prompt: str, input_images: list[str],
+                       output_path: str, size: str = "2K", n: int = 1,
+                       watermark: bool = False, thinking_mode: bool = False):
+    headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Authorization": f"Bearer {api_key}",
+    }
+
+    content: list[dict] = []
+    for img in input_images:
+        content.append({"image": _to_file_url(img)})
+    content.append({"text": prompt})
+
+    payload = {
+        "model": model,
+        "input": {
+            "messages": [{"role": "user", "content": content}]
+        },
+        "parameters": {
+            "size": size if size else "2K",
+            "n": n,
+            "watermark": watermark,
+        },
+    }
+    if thinking_mode:
+        payload["parameters"]["thinking_mode"] = True
+
+    print(f"Editing image with {model}...", file=sys.stderr)
+    try:
+        payload_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        response = requests.post(DASHSCOPE_API_URL, headers=headers, data=payload_bytes)
+        response.raise_for_status()
+        result = response.json()
+
+        if "code" in result and result["code"]:
+            print(f"API Error: {result['message']}", file=sys.stderr)
+            sys.exit(1)
+
+        _save_images_from_choices(result, output_path)
+
+    except Exception as e:
+        print(f"Error editing image: {e}", file=sys.stderr)
         import traceback
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
@@ -726,13 +790,17 @@ def generate_r2v(api_key: str, model: str, prompt: str, reference_urls: list[str
 
 def main():
     parser = argparse.ArgumentParser(description="Run Bailian Multimodal Models")
-    parser.add_argument("--mode", required=True, choices=["image", "asr", "tts", "t2v", "i2v", "r2v"], help="Task mode")
+    parser.add_argument("--mode", required=True, choices=["image", "image-edit", "asr", "tts", "t2v", "i2v", "r2v"], help="Task mode")
     parser.add_argument("--model", required=True, help="Model name (e.g., z-image-turbo, wan2.6-t2v)")
     parser.add_argument("--api-key", help="DashScope API Key")
     
     # Image specific
     parser.add_argument("--prompt", help="Text prompt for image/video generation")
-    parser.add_argument("--size", help="Image/video size (e.g., 1024*1024, 1280*720)")
+    parser.add_argument("--size", help="Image/video size (e.g., 1024*1024, 1280*720, 2K)")
+    parser.add_argument("--n", type=int, default=1, help="Number of images to generate")
+    parser.add_argument("--enable-sequential", action="store_true", help="Enable sequential consistency for multi-image generation")
+    parser.add_argument("--thinking-mode", action="store_true", help="Enable thinking mode for image editing")
+    parser.add_argument("--input-images", nargs="+", help="Input image URLs or local paths for image editing")
     
     # ASR specific
     parser.add_argument("--input-audio", help="Input audio URL or file path")
@@ -773,7 +841,17 @@ def main():
         if not args.prompt or not args.output:
             print("Error: --prompt and --output are required for image mode.", file=sys.stderr)
             sys.exit(1)
-        generate_image(api_key, args.model, args.prompt, args.output, args.size)
+        generate_image(api_key, args.model, args.prompt, args.output, args.size,
+                       n=args.n, enable_sequential=args.enable_sequential,
+                       watermark=args.watermark)
+
+    elif args.mode == "image-edit":
+        if not args.prompt or not args.input_images or not args.output:
+            print("Error: --prompt, --input-images and --output are required for image-edit mode.", file=sys.stderr)
+            sys.exit(1)
+        generate_image_edit(api_key, args.model, args.prompt, args.input_images, args.output,
+                            size=args.size or "2K", n=args.n, watermark=args.watermark,
+                            thinking_mode=args.thinking_mode)
         
     elif args.mode == "asr":
         if not args.input_audio:
