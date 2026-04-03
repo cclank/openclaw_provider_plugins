@@ -38,9 +38,10 @@ Generate images, audio, video, and transcribe speech using Aliyun Bailian (Qwen/
 
 - **Image Generation**: `z-image-turbo`, `wan2.6-t2i`, `wan2.7-image-pro`
 - **Image Editing**: `wan2.7-image-pro`
+- **Video Editing**: `wan2.7-videoedit`
 - **ASR (Speech-to-Text)**: `qwen3-asr-flash`
 - **TTS (Text-to-Speech)**: `qwen3-tts-flash`
-- **Text-to-Video**: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
+- **Text-to-Video**: `wan2.7-t2v`, `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
 - **Image-to-Video**: `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/kling-v3-video-generation`
 - **Reference-to-Video**: `wan2.6-r2v-flash`, `wan2.6-r2v`, `pixverse/pixverse-v5.6-r2v`
 
@@ -94,6 +95,18 @@ uv run {baseDir}/scripts/run_multimodal.py --mode tts --model qwen3-tts-flash --
 
 Generate video from text prompt. Async task with auto-polling.
 
+**wan2.7-t2v** (new protocol — uses `resolution` + `ratio` instead of `size`, no `shot_type`):
+
+```bash
+uv run {baseDir}/scripts/run_multimodal.py --mode t2v --model wan2.7-t2v --prompt "一只小猫在月光下奔跑" --resolution 1080P --ratio 16:9 --duration 10 --output "cat.mp4"
+```
+
+Options (wan2.7-t2v): `--resolution` (720P/1080P, default 1080P), `--ratio` (16:9/9:16/1:1, default 16:9), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`
+
+> Note: `--shot-type` is **not** supported for wan2.7-t2v. Use natural language in `--prompt` to describe shot structure (e.g., "生成多镜头视频" or timestamp-based descriptions).
+
+**wan2.6-t2v and earlier** (legacy protocol — uses `size` and `shot-type`):
+
 ```bash
 uv run {baseDir}/scripts/run_multimodal.py --mode t2v --model wan2.6-t2v --prompt "一只小猫在月光下奔跑" --duration 10 --size "1280*720" --output "cat.mp4"
 ```
@@ -102,8 +115,44 @@ Models: `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-genera
 
 Options: `--size` (e.g., 1280*720, 1920*1080), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--shot-type single|multi`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`, `--quality-mode std|pro`
 
-### 6. Image-to-Video (I2V)
+### 5.5 Video Editing (videoedit)
 
+Edit an existing video with text instructions (style transfer, content modification, etc.).
+
+```bash
+uv run {baseDir}/scripts/run_multimodal.py --mode videoedit --model wan2.7-videoedit \
+  --video-url "https://example.com/input.mp4" \
+  --prompt "将整个画面转换为黏土风格" \
+  --resolution 1080P \
+  --output "edited.mp4"
+```
+
+With reference images (for appearance/style guidance):
+
+```bash
+uv run {baseDir}/scripts/run_multimodal.py --mode videoedit --model wan2.7-videoedit \
+  --video-url "clip.mp4" \
+  --prompt "为人物换上参考图里的服装" \
+  --ref-images "outfit.png" \
+  --resolution 1080P \
+  --output "result.mp4"
+```
+
+Models: `wan2.7-videoedit`
+
+Options:
+- `--video-url` (required): input video URL or local file path
+- `--prompt` (optional): editing instruction (up to 5000 chars)
+- `--negative-prompt` (optional): content to avoid
+- `--ref-images` (optional): one or more reference image URLs/local paths
+- `--resolution` (720P/1080P, default 1080P)
+- `--ratio` (16:9/9:16/1:1; omit to preserve input video's ratio)
+- `--prompt-extend`/`--no-prompt-extend` (default: enabled)
+- `--watermark`, `--seed`
+
+> Note: Billing = input video duration + output video duration (seconds).
+
+### 6. Image-to-Video (I2V)
 Generate video from a reference image (first frame).
 
 ```bash

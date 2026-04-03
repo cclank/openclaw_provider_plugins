@@ -32,6 +32,8 @@ PIXVERSE_T2V_MODELS = {"pixverse/pixverse-v5.6-t2v"}
 PIXVERSE_I2V_MODELS = {"pixverse/pixverse-v5.6-it2v"}
 PIXVERSE_R2V_MODELS = {"pixverse/pixverse-v5.6-r2v"}
 KLING_VIDEO_MODELS = {"kling/kling-v3-video-generation"}
+WAN27_T2V_MODELS = {"wan2.7-t2v"}
+WAN27_VIDEOEDIT_MODELS = {"wan2.7-videoedit"}
 
 
 def get_api_key(provided_key: str | None) -> str:
@@ -57,7 +59,9 @@ def _to_file_url(path_or_url: str) -> str:
     if not os.path.exists(abs_path):
         print(f"Error: File not found: {abs_path}", file=sys.stderr)
         sys.exit(1)
-    return f"file://{abs_path}"
+    # URL-encode spaces and special characters in the path
+    from urllib.parse import quote
+    return "file://" + quote(abs_path, safe="/:@")
 
 
 def _video_headers(api_key: str) -> dict[str, str]:
@@ -68,9 +72,71 @@ def _video_headers(api_key: str) -> dict[str, str]:
     }
 
 
+def _video_headers_with_oss(api_key: str) -> dict[str, str]:
+    """Headers for requests that use oss:// URLs (e.g. videoedit)."""
+    h = _video_headers(api_key)
+    h["X-DashScope-OssResourceResolve"] = "enable"
+    return h
+
+
+def _upload_local_file_to_oss(api_key: str, model_name: str, file_path: str) -> str:
+    """Upload a local file to Aliyun temp storage and return oss:// URL."""
+    from pathlib import Path
+    abs_path = os.path.abspath(file_path)
+    if not os.path.exists(abs_path):
+        print(f"Error: File not found: {abs_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Step 1: get upload policy
+    policy_resp = requests.get(
+        "https://dashscope.aliyuncs.com/api/v1/uploads",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        params={"action": "getPolicy", "model": model_name},
+        timeout=30,
+    )
+    if not policy_resp.ok:
+        raise RuntimeError(f"Failed to get upload policy: {policy_resp.text}")
+    data = policy_resp.json()["data"]
+
+    # Step 2: upload to OSS
+    file_name = Path(abs_path).name
+    key = f"{data['upload_dir']}/{file_name}"
+    with open(abs_path, "rb") as f:
+        files = {
+            "OSSAccessKeyId": (None, data["oss_access_key_id"]),
+            "Signature": (None, data["signature"]),
+            "policy": (None, data["policy"]),
+            "x-oss-object-acl": (None, data["x_oss_object_acl"]),
+            "x-oss-forbid-overwrite": (None, data["x_oss_forbid_overwrite"]),
+            "key": (None, key),
+            "success_action_status": (None, "200"),
+            "file": (file_name, f),
+        }
+        upload_resp = requests.post(data["upload_host"], files=files, timeout=300)
+    if upload_resp.status_code != 200:
+        raise RuntimeError(f"Failed to upload file to OSS ({upload_resp.status_code}): {upload_resp.text[:200]}")
+
+    oss_url = f"oss://{key}"
+    print(f"Uploaded {file_name} -> {oss_url}", file=sys.stderr)
+    return oss_url
+
+
+def _resolve_media_url(api_key: str, model_name: str, path_or_url: str) -> str:
+    """Return a URL suitable for server-side download.
+    - HTTP/HTTPS/OSS URLs are returned as-is.
+    - Local file paths are uploaded to Aliyun temp storage and the oss:// URL is returned.
+    """
+    if path_or_url.startswith(("http://", "https://", "oss://", "data:")):
+        return path_or_url
+    # Local path — upload to get oss:// URL
+    return _upload_local_file_to_oss(api_key, model_name, path_or_url)
+
+
 def _post_json(url: str, headers: dict[str, str], payload: dict) -> dict:
     payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     response = requests.post(url, headers=headers, data=payload_bytes)
+    if not response.ok:
+        print(f"HTTP {response.status_code}: {response.text[:500]}", file=sys.stderr)
     response.raise_for_status()
     result = response.json()
     if result.get("code"):
@@ -557,13 +623,115 @@ def _generate_kling_i2v(api_key: str, model: str, img_url: str, output_path: str
     _download_video(_extract_video_url(result), output_path)
 
 
+# --- wan2.7 Video Edit ---
+def _generate_wan27_videoedit(api_key: str, model: str, video_url: str, output_path: str,
+                              prompt: str | None = None,
+                              negative_prompt: str | None = None,
+                              ref_images: list[str] | None = None,
+                              resolution: str | None = None,
+                              ratio: str | None = None,
+                              prompt_extend: bool = True,
+                              watermark: bool = False,
+                              seed: int | None = None):
+    """Edit a video using wan2.7-videoedit (new HTTP protocol, SDK not supported)."""
+    # Resolve input video: upload local files to OSS
+    resolved_video = _resolve_media_url(api_key, model, video_url)
+
+    media: list[dict] = [{"type": "video", "url": resolved_video}]
+    if ref_images:
+        for img in ref_images:
+            resolved_img = _resolve_media_url(api_key, model, img)
+            media.append({"type": "reference_image", "url": resolved_img})
+
+    inp: dict = {"media": media}
+    if prompt:
+        inp["prompt"] = prompt
+    if negative_prompt:
+        inp["negative_prompt"] = negative_prompt
+
+    params: dict = {
+        "resolution": resolution or "1080P",
+        "prompt_extend": prompt_extend,
+        "watermark": watermark,
+    }
+    if ratio:
+        params["ratio"] = ratio
+    if seed is not None:
+        params["seed"] = seed
+
+    payload = {"model": model, "input": inp, "parameters": params}
+    # videoedit requires X-DashScope-OssResourceResolve: enable when using oss:// URLs
+    result = _post_json(VIDEO_SYNTHESIS_URL, _video_headers_with_oss(api_key), payload)
+    output = result.get("output", {})
+    task_id = output.get("task_id")
+    if not task_id:
+        raise RuntimeError(f"Missing task_id in response: {json.dumps(result, ensure_ascii=False)}")
+    print(f"Created task {task_id}, polling for result...", file=sys.stderr)
+    final_result = _poll_task(api_key, task_id)
+    _download_video(_extract_video_url(final_result), output_path)
+
+
+# --- wan2.7 T2V (new HTTP protocol) ---
+def _generate_wan27_t2v(api_key: str, model: str, prompt: str, output_path: str,
+                        resolution: str | None = None, ratio: str | None = None,
+                        size: str | None = None, duration: int | None = None,
+                        prompt_extend: bool = True,
+                        negative_prompt: str | None = None,
+                        audio_url: str | None = None, audio: bool = False,
+                        watermark: bool = False, seed: int | None = None):
+    """Submit wan2.7-t2v using the new HTTP API protocol (SDK not supported)."""
+    # Derive ratio from size if ratio not explicitly provided
+    if not ratio and size:
+        ratio = _size_to_aspect_ratio(size)
+
+    inp: dict = {"prompt": prompt}
+    if negative_prompt:
+        inp["negative_prompt"] = negative_prompt
+
+    params: dict = {
+        "resolution": resolution or "1080P",
+        "ratio": ratio or "16:9",
+        "prompt_extend": prompt_extend,
+        "watermark": watermark,
+    }
+    if duration is not None:
+        params["duration"] = duration
+    if audio_url:
+        params["audio_url"] = audio_url
+    if audio:
+        params["audio"] = True
+    if seed is not None:
+        params["seed"] = seed
+
+    payload = {"model": model, "input": inp, "parameters": params}
+    result = _submit_async_video_task(api_key, payload)
+    _download_video(_extract_video_url(result), output_path)
+
+
 # --- Text-to-Video ---
 def generate_t2v(api_key: str, model: str, prompt: str, output_path: str,
                  size: str | None = None, duration: int | None = None,
                  prompt_extend: bool = True, shot_type: str = "single",
                  negative_prompt: str | None = None, audio_url: str | None = None,
                  watermark: bool = False, seed: int | None = None,
-                 audio: bool = False, quality_mode: str = "std"):
+                 audio: bool = False, quality_mode: str = "std",
+                 resolution: str | None = None, ratio: str | None = None):
+    if model in WAN27_T2V_MODELS:
+        print(f"Generating text-to-video with {model} (wan2.7 HTTP API)...", file=sys.stderr)
+        try:
+            _generate_wan27_t2v(
+                api_key, model, prompt, output_path,
+                resolution=resolution, ratio=ratio, size=size,
+                duration=duration, prompt_extend=prompt_extend,
+                negative_prompt=negative_prompt, audio_url=audio_url,
+                audio=audio, watermark=watermark, seed=seed,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating wan2.7 t2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
     if model in PIXVERSE_T2V_MODELS:
         print(f"Generating text-to-video with {model} (PixVerse API)...", file=sys.stderr)
         try:
@@ -790,7 +958,7 @@ def generate_r2v(api_key: str, model: str, prompt: str, reference_urls: list[str
 
 def main():
     parser = argparse.ArgumentParser(description="Run Bailian Multimodal Models")
-    parser.add_argument("--mode", required=True, choices=["image", "image-edit", "asr", "tts", "t2v", "i2v", "r2v"], help="Task mode")
+    parser.add_argument("--mode", required=True, choices=["image", "image-edit", "asr", "tts", "t2v", "i2v", "r2v", "videoedit"], help="Task mode")
     parser.add_argument("--model", required=True, help="Model name (e.g., z-image-turbo, wan2.6-t2v)")
     parser.add_argument("--api-key", help="DashScope API Key")
     
@@ -822,9 +990,14 @@ def main():
     parser.add_argument("--quality-mode", choices=["std", "pro"], default="std", help="Video quality mode for models that support it (for example Kling)")
     parser.set_defaults(audio=None)
     
-    # I2V specific
+    # I2V / wan2.7-t2v / videoedit specific
     parser.add_argument("--img-url", help="Image URL for i2v mode")
-    parser.add_argument("--resolution", help="Video resolution for i2v (480P/720P/1080P)")
+    parser.add_argument("--resolution", help="Video resolution: 480P/720P/1080P (i2v) or 720P/1080P (wan2.7 models, default 1080P)")
+    parser.add_argument("--ratio", choices=["16:9", "9:16", "1:1"], help="Video aspect ratio for wan2.7 models (default 16:9 for t2v; follows input video for videoedit)")
+
+    # videoedit specific
+    parser.add_argument("--video-url", help="Input video URL or local path for videoedit mode")
+    parser.add_argument("--ref-images", nargs="+", help="Reference image URLs or local paths for videoedit mode (optional)")
     
     # R2V specific
     parser.add_argument("--reference-urls", nargs="+", help="Reference URLs (images/videos) for r2v mode")
@@ -874,7 +1047,8 @@ def main():
                      prompt_extend=args.prompt_extend, shot_type=args.shot_type,
                      negative_prompt=args.negative_prompt, audio_url=args.audio_url,
                      watermark=args.watermark, seed=args.seed,
-                     audio=video_audio, quality_mode=args.quality_mode)
+                     audio=video_audio, quality_mode=args.quality_mode,
+                     resolution=args.resolution, ratio=args.ratio)
 
     elif args.mode == "i2v":
         if not args.img_url or not args.output:
@@ -895,6 +1069,31 @@ def main():
                      size=args.size, duration=args.duration, shot_type=args.shot_type,
                      negative_prompt=args.negative_prompt, audio=r2v_audio,
                      watermark=args.watermark, seed=args.seed)
+
+    elif args.mode == "videoedit":
+        if not args.video_url or not args.output:
+            print("Error: --video-url and --output are required for videoedit mode.", file=sys.stderr)
+            sys.exit(1)
+        if args.model not in WAN27_VIDEOEDIT_MODELS:
+            print(f"Error: videoedit mode only supports models: {WAN27_VIDEOEDIT_MODELS}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Editing video with {args.model}...", file=sys.stderr)
+        try:
+            _generate_wan27_videoedit(
+                api_key, args.model, args.video_url, args.output,
+                prompt=args.prompt,
+                negative_prompt=args.negative_prompt,
+                ref_images=args.ref_images,
+                resolution=args.resolution,
+                ratio=args.ratio,
+                prompt_extend=args.prompt_extend,
+                watermark=args.watermark,
+                seed=args.seed,
+            )
+        except Exception as e:
+            print(f"Error editing video: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
 
 if __name__ == "__main__":
     main()
