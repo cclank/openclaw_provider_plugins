@@ -182,8 +182,8 @@ Options: `--reference-urls` (required, space-separated, up to 5, supports local 
 
 ## Notes
 
-- 本地图片或视频路径会和 Wan 模型一样自动转换为 `file://` URL 后传入。
-- PixVerse 与 Kling 的官方文档描述以 URL 方式提交媒体；脚本已经兼容本地路径输入，但若百炼后端对某些模型拒绝 `file://`，请改用可公网访问的 HTTP/HTTPS URL。
+- **本地文件处理**：脚本自动处理本地路径。wan2.7-videoedit 模式会将本地视频/图片上传到 DashScope OSS 获取 `oss://` URL；其他模式（image/i2v/r2v 等）使用 SDK 自带的 `file://` URL 传入。
+- PixVerse 与 Kling 模型以 URL 方式提交媒体；脚本已兼容本地路径输入，但若百炼后端对某些模型拒绝 `file://`，请改用可公网访问的 HTTP/HTTPS URL。
 
 ## Configuration
 

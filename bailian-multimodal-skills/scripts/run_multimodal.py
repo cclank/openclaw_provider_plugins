@@ -344,8 +344,20 @@ def generate_image_edit(api_key: str, model: str, prompt: str, input_images: lis
     }
 
     content: list[dict] = []
+    import base64
+    import mimetypes
+
     for img in input_images:
-        content.append({"image": _to_file_url(img)})
+        # Convert local image to base64 format for API
+        mime_type, _ = mimetypes.guess_type(img)
+        if not mime_type or not mime_type.startswith('image/'):
+            mime_type = 'image/jpeg'  # default to jpeg
+
+        with open(img, "rb") as image_file:
+            encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+        base64_url = f"data:{mime_type};base64,{encoded_string}"
+
+        content.append({"image": base64_url})
     content.append({"text": prompt})
 
     payload = {

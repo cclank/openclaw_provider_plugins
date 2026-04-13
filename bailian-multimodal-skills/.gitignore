@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Debug / test scripts
+debug_*.py
+test_*.py
+test_*.sh
+verify_*.py
+check_*.sh
+summary_*.py
+
+# Test output images/videos
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.gif
+
+# macOS
+.DS_Store
