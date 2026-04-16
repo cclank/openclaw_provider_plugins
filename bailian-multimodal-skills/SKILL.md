@@ -42,7 +42,7 @@ Generate images, audio, video, and transcribe speech using Aliyun Bailian (Qwen/
 - **ASR (Speech-to-Text)**: `qwen3-asr-flash`
 - **TTS (Text-to-Speech)**: `qwen3-tts-flash`
 - **Text-to-Video**: `wan2.7-t2v`, `wan2.6-t2v`, `pixverse/pixverse-v5.6-t2v`, `kling/kling-v3-video-generation`
-- **Image-to-Video**: `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/kling-v3-video-generation`
+- **Image-to-Video**: `wan2.7-i2v`, `wan2.6-i2v-flash`, `wan2.6-i2v`, `pixverse/pixverse-v5.6-it2v`, `kling/kling-v3-video-generation`
 - **Reference-to-Video**: `wan2.6-r2v-flash`, `wan2.6-r2v`, `pixverse/pixverse-v5.6-r2v`
 
 ## Usage
@@ -154,6 +154,16 @@ Options:
 
 ### 6. Image-to-Video (I2V)
 Generate video from a reference image (first frame).
+
+**wan2.7-i2v** (new protocol — uses `resolution` + `ratio`):
+
+```bash
+uv run {baseDir}/scripts/run_multimodal.py --mode i2v --model wan2.7-i2v --img-url "photo.png" --prompt "人物微微歪头，自然眨眼，浅笑" --resolution 1080P --ratio 9:16 --duration 10 --output "result.mp4"
+```
+
+Options (wan2.7-i2v): `--img-url` (required), `--prompt`, `--resolution` (720P/1080P, default 1080P), `--ratio` (16:9/9:16/1:1), `--duration`, `--prompt-extend`/`--no-prompt-extend`, `--negative-prompt`, `--audio-url`, `--audio`/`--no-audio`, `--watermark`, `--seed`
+
+**wan2.6 and other models**:
 
 ```bash
 uv run {baseDir}/scripts/run_multimodal.py --mode i2v --model wan2.6-i2v-flash --img-url "https://example.com/cat.png" --prompt "A cat running" --resolution 720P --duration 5 --output "cat_run.mp4"

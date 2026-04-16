@@ -33,6 +33,7 @@ PIXVERSE_I2V_MODELS = {"pixverse/pixverse-v5.6-it2v"}
 PIXVERSE_R2V_MODELS = {"pixverse/pixverse-v5.6-r2v"}
 KLING_VIDEO_MODELS = {"kling/kling-v3-video-generation"}
 WAN27_T2V_MODELS = {"wan2.7-t2v"}
+WAN27_I2V_MODELS = {"wan2.7-i2v"}
 WAN27_VIDEOEDIT_MODELS = {"wan2.7-videoedit"}
 
 
@@ -683,6 +684,51 @@ def _generate_wan27_videoedit(api_key: str, model: str, video_url: str, output_p
     _download_video(_extract_video_url(final_result), output_path)
 
 
+# --- wan2.7 I2V (new HTTP protocol) ---
+def _generate_wan27_i2v(api_key: str, model: str, img_url: str, output_path: str,
+                        prompt: str | None = None,
+                        resolution: str | None = None, ratio: str | None = None,
+                        duration: int | None = None,
+                        prompt_extend: bool = True,
+                        negative_prompt: str | None = None,
+                        audio_url: str | None = None, audio: bool = False,
+                        watermark: bool = False, seed: int | None = None):
+    """Generate video from image using wan2.7-i2v (new HTTP API protocol)."""
+    resolved_img = _resolve_media_url(api_key, model, img_url)
+
+    inp: dict = {"media": [{"type": "first_frame", "url": resolved_img}]}
+    if prompt:
+        inp["prompt"] = prompt
+    if negative_prompt:
+        inp["negative_prompt"] = negative_prompt
+
+    params: dict = {
+        "resolution": resolution or "1080P",
+        "prompt_extend": prompt_extend,
+        "watermark": watermark,
+    }
+    if ratio:
+        params["ratio"] = ratio
+    if duration is not None:
+        params["duration"] = duration
+    if audio_url:
+        params["audio_url"] = audio_url
+    if audio:
+        params["audio"] = True
+    if seed is not None:
+        params["seed"] = seed
+
+    payload = {"model": model, "input": inp, "parameters": params}
+    result = _post_json(VIDEO_SYNTHESIS_URL, _video_headers_with_oss(api_key), payload)
+    output = result.get("output", {})
+    task_id = output.get("task_id")
+    if not task_id:
+        raise RuntimeError(f"Missing task_id in response: {json.dumps(result, ensure_ascii=False)}")
+    print(f"Created task {task_id}, polling for result...", file=sys.stderr)
+    final_result = _poll_task(api_key, task_id)
+    _download_video(_extract_video_url(final_result), output_path)
+
+
 # --- wan2.7 T2V (new HTTP protocol) ---
 def _generate_wan27_t2v(api_key: str, model: str, prompt: str, output_path: str,
                         resolution: str | None = None, ratio: str | None = None,
@@ -825,7 +871,24 @@ def generate_i2v(api_key: str, model: str, img_url: str, output_path: str,
                  shot_type: str = "single", negative_prompt: str | None = None,
                  audio_url: str | None = None, watermark: bool = False,
                  seed: int | None = None, audio: bool = False,
-                 quality_mode: str = "std"):
+                 quality_mode: str = "std",
+                 ratio: str | None = None):
+    if model in WAN27_I2V_MODELS:
+        print(f"Generating image-to-video with {model} (wan2.7 HTTP API)...", file=sys.stderr)
+        try:
+            _generate_wan27_i2v(
+                api_key, model, img_url, output_path,
+                prompt=prompt, resolution=resolution, ratio=ratio,
+                duration=duration, prompt_extend=prompt_extend,
+                negative_prompt=negative_prompt, audio_url=audio_url,
+                audio=audio, watermark=watermark, seed=seed,
+            )
+            return
+        except Exception as e:
+            print(f"Error generating wan2.7 i2v: {e}", file=sys.stderr)
+            import traceback; traceback.print_exc(file=sys.stderr)
+            sys.exit(1)
+
     if model in PIXVERSE_I2V_MODELS:
         print(f"Generating image-to-video with {model} (PixVerse API)...", file=sys.stderr)
         try:
@@ -1071,7 +1134,8 @@ def main():
                      duration=args.duration, prompt_extend=args.prompt_extend,
                      shot_type=args.shot_type, negative_prompt=args.negative_prompt,
                      audio_url=args.audio_url, watermark=args.watermark, seed=args.seed,
-                     audio=video_audio, quality_mode=args.quality_mode)
+                     audio=video_audio, quality_mode=args.quality_mode,
+                     ratio=args.ratio)
 
     elif args.mode == "r2v":
         if not args.prompt or not args.reference_urls or not args.output:
